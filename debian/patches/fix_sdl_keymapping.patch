@@ -1,0 +1,52 @@
+Description: <short summary of the patch>
+ If VBoxSDL is configured without X11 support on a Linux system,
+ keycodes are directly used from the input. Rather use SDL Keysyms
+ instead.
+ .
+ virtualbox (4.2.16-dfsg-3ubuntu0.1bwfla2) precise; urgency=low
+ .
+   * Fix keycode mapping in VBoxSDL.
+Author: <thomas@bw-fla.uni-freiburg.de>
+
+---
+The information above should follow the Patch Tagging Guidelines, please
+checkout http://dep.debian.net/deps/dep3/ to learn about the format. Here
+are templates for supplementary fields that you might want to add:
+
+Origin: <vendor|upstream|other>, <url of original patch>
+Bug: <url in upstream bugtracker>
+Bug-Debian: http://bugs.debian.org/<bugnumber>
+Bug-Ubuntu: https://launchpad.net/bugs/<bugnumber>
+Forwarded: <no|not-needed|url proving that it has been forwarded>
+Reviewed-By: <name and email of someone who approved the patch>
+Last-Update: <YYYY-MM-DD>
+
+Index: virtualbox-4.2.16-dfsg/src/VBox/Frontends/VBoxSDL/VBoxSDL.cpp
+===================================================================
+--- virtualbox-4.2.16-dfsg.orig/src/VBox/Frontends/VBoxSDL/VBoxSDL.cpp	2014-10-09 14:29:53.000000000 +0200
++++ virtualbox-4.2.16-dfsg/src/VBox/Frontends/VBoxSDL/VBoxSDL.cpp	2014-10-09 16:32:31.521855001 +0200
+@@ -3050,7 +3050,6 @@
+     return (gfAbsoluteMouseHost && gfAbsoluteMouseGuest);
+ }
+ 
+-#if defined(RT_OS_DARWIN) || defined(RT_OS_OS2)
+ /**
+  * Fallback keycode conversion using SDL symbols.
+  *
+@@ -3210,7 +3209,6 @@
+             return 0;
+     }
+ }
+-#endif /* RT_OS_DARWIN */
+ 
+ /**
+  * Converts an SDL keyboard eventcode to a XT scancode.
+@@ -3526,6 +3524,8 @@
+ #elif RT_OS_OS2
+     keycode = Keyevent2KeycodeFallback(ev);
+ #endif /* RT_OS_DARWIN */
++
++    return Keyevent2KeycodeFallback(ev);
+     return keycode;
+ }
+ 

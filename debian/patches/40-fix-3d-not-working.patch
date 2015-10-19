@@ -1,0 +1,279 @@
+Description: Make 3D graphic work
+ This is a cherry-pick and rebase of upstream commit
+ Thanks Monsta for providing the patch.
+
+Origin: upstream, https://github.com/mdaniel/virtualbox-org-svn-vbox-trunk/commit/091213fd0b5e319918172d1f486cdf2bfffb75ff
+Bug: https://www.virtualbox.org/ticket/12941
+Bug-Ubuntu: https://launchpad.net/bugs/1351376
+Forwarded: not-needed
+Reviewed-By: Gianfranco Costamagna <costamagnagianfranco@yahoo.it>
+Last-Update: <2015-02-08>
+
+--- virtualbox-4.3.10-dfsg.orig/src/VBox/Additions/x11/vboxvideo/undefined
++++ virtualbox-4.3.10-dfsg/src/VBox/Additions/x11/vboxvideo/undefined
+@@ -28,8 +28,10 @@ chmod
+ chown
+ close
+ drmClose
++drmDropMaster
+ drmFreeVersion
+ drmGetVersion
++drmSetMaster
+ fbPictureInit
+ fbScreenInit
+ fchmod
+--- virtualbox-4.3.10-dfsg.orig/src/VBox/Additions/x11/vboxvideo/vboxvideo.c
++++ virtualbox-4.3.10-dfsg/src/VBox/Additions/x11/vboxvideo/vboxvideo.c
+@@ -75,6 +75,7 @@
+ #include "fb.h"
+ 
+ #include "vboxvideo.h"
++#include <VBox/VBoxGuest.h>
+ #include "version-generated.h"
+ #include "product-generated.h"
+ #include <xf86.h>
+@@ -102,6 +103,10 @@
+ # include <X11/Xatom.h>
+ #endif
+ 
++#ifdef VBOX_DRI
++# include "xf86drm.h"
++#endif
++
+ /* Mandatory functions */
+ 
+ static const OptionInfoRec * VBOXAvailableOptions(int chipid, int busid);
+@@ -1013,6 +1018,11 @@ static Bool VBOXScreenInit(ScreenPtr pSc
+ 
+ #ifdef VBOX_DRI
+     pVBox->useDRI = VBOXDRIScreenInit(pScrn, pScreen, pVBox);
++# ifndef VBOX_DRI_OLD /* DRI2 */
++    if (pVBox->drmFD >= 0)
++        /* Tell the kernel driver, if present, that we are taking over. */
++        drmIoctl(pVBox->drmFD, VBOXVIDEO_IOCTL_DISABLE_HGSMI, NULL);
++# endif
+ #endif
+ 
+     if (!fbScreenInit(pScreen, pVBox->base,
+@@ -1178,12 +1188,19 @@ static Bool VBOXEnterVT(ScrnInfoPtr pScr
+ 
+     TRACE_ENTRY();
+     vboxClearVRAM(pScrn, 0, 0);
+-    if (pVBox->fHaveHGSMI)
+-        vboxEnableVbva(pScrn);
+ #ifdef VBOX_DRI_OLD
+     if (pVBox->useDRI)
+         DRIUnlock(xf86ScrnToScreen(pScrn));
++#elif defined(VBOX_DRI) /* DRI2 */
++    if (pVBox->drmFD >= 0)
++    {
++        /* Tell the kernel driver, if present, that we are taking over. */
++        drmIoctl(pVBox->drmFD, VBOXVIDEO_IOCTL_DISABLE_HGSMI, NULL);
++        drmSetMaster(pVBox->drmFD);
++    }
+ #endif
++    if (pVBox->fHaveHGSMI)
++        vboxEnableVbva(pScrn);
+     /* Re-assert this in case we had a change request while switched out. */
+     if (pVBox->FBSize.cx && pVBox->FBSize.cy)
+         VBOXAdjustScreenPixmap(pScrn, pVBox->FBSize.cx, pVBox->FBSize.cy);
+@@ -1207,12 +1224,20 @@ static void VBOXLeaveVT(ScrnInfoPtr pScr
+     if (pVBox->fHaveHGSMI)
+         vboxDisableVbva(pScrn);
+     vboxClearVRAM(pScrn, 0, 0);
+-    VBOXRestoreMode(pScrn);
+     vboxDisableGraphicsCap(pVBox);
+ #ifdef VBOX_DRI_OLD
+     if (pVBox->useDRI)
+         DRILock(xf86ScrnToScreen(pScrn), 0);
++#elif defined(VBOX_DRI) /* DRI2 */
++    if (pVBox->drmFD >= 0)
++        drmDropMaster(pVBox->drmFD);
++        /* Tell the kernel driver, if present, that it can use the framebuffer
++        * driver again. If not, or if that fails, restore the old mode ourselves.
++        */
++        if ( pVBox->drmFD < 0
++        || drmIoctl(pVBox->drmFD, VBOXVIDEO_IOCTL_ENABLE_HGSMI, NULL) < 0)
+ #endif
++        VBOXRestoreMode(pScrn);
+     TRACE_EXIT();
+ }
+ 
+@@ -1220,7 +1245,9 @@ static Bool VBOXCloseScreen(ScreenPtr pS
+ {
+     ScrnInfoPtr pScrn = xf86ScreenToScrn(pScreen);
+     VBOXPtr pVBox = VBOXGetRec(pScrn);
+-
++#if defined(VBOX_DRI) && !defined(VBOX_DRI_OLD) /* DRI2 */
++    BOOL fRestore = TRUE;
++#endif
+     if (pScrn->vtSema)
+     {
+         if (pVBox->fHaveHGSMI)
+@@ -1230,15 +1257,23 @@ static Bool VBOXCloseScreen(ScreenPtr pS
+         vboxClearVRAM(pScrn, 0, 0);
+     }
+ #ifdef VBOX_DRI
++# ifndef VBOX_DRI_OLD /* DRI2 */
++    if (   pVBox->drmFD >= 0
++        /* Tell the kernel driver, if present, that we are going away. */
++        && drmIoctl(pVBox->drmFD, VBOXVIDEO_IOCTL_ENABLE_HGSMI, NULL) >= 0)
++        fRestore = false;
++# endif
+     if (pVBox->useDRI)
+         VBOXDRICloseScreen(pScreen, pVBox);
+     pVBox->useDRI = false;
+ #endif
+-
+-    if (pScrn->vtSema) {
+-        VBOXRestoreMode(pScrn);
++#if defined(VBOX_DRI) && !defined(VBOX_DRI_OLD) /* DRI2 */
++    if (fRestore)
++#endif
++        if (pScrn->vtSema)
++           VBOXRestoreMode(pScrn);
++    if (pScrn->vtSema)
+         VBOXUnmapVidMem(pScrn);
+-    }
+     pScrn->vtSema = FALSE;
+ 
+     /* Do additional bits which are separate for historical reasons */
+--- virtualbox-4.3.10-dfsg.orig/src/VBox/Additions/x11/vboxvideo/vboxvideo_dri2.c
++++ virtualbox-4.3.10-dfsg/src/VBox/Additions/x11/vboxvideo/vboxvideo_dri2.c
+@@ -16,8 +16,11 @@
+  */
+ 
+ #include "vboxvideo.h"
++#include <xf86drm.h>
+ #include <drm.h>
+ #include <dri2.h>
++#include <fcntl.h>
++#include <unistd.h>
+ 
+ static void VBOXDRICopyRegion(DrawablePtr pDraw, RegionPtr pRegion,
+                               DRI2BufferPtr pDest, DRI2BufferPtr pSrc)
+@@ -36,18 +39,56 @@ static void VBOXDRIDestroyBuffer(Drawabl
+     free(pBuffer);
+ }
+ 
++/* We need to pass a constant path string to the screen initialisation function.
++ * The format is hard-coded in "drmOpen" in libdrm, and libdrm contains a
++ * comment to say that open should be done manually in future and not using
++ * "drmOpen", so we will do it manually but also hard-coding the format. The
++ * maximum minor number (15) is also hard-coded. */
++#define PATH(minor) "/dev/dri/card" #minor
++const char *devicePaths[] =
++{
++    PATH(0), PATH(1), PATH(2), PATH(3), PATH(4), PATH(5), PATH(6), PATH(7),
++    PATH(8), PATH(9), PATH(10), PATH(11), PATH(12), PATH(13), PATH(14), PATH(15)
++};
++#undef PATH
++
+ /** As long as we are using our fake DRI driver inside of Mesa, we only want
+  *  to implement the minimum here to make Mesa load it.  Notably we just set
+  *  "DRI2Info.fd" to -1 as we do not need authentication to work. */
+ Bool VBOXDRIScreenInit(ScrnInfoPtr pScrn, ScreenPtr pScreen, VBOXPtr pVBox)
+ {
+     DRI2InfoRec DRI2Info;
++    unsigned i;
+ 
+     memset(&DRI2Info, 0, sizeof(DRI2Info));
++    pVBox->drmFD = -1;
++    for (i = 0; i < RT_ELEMENTS(devicePaths); ++i)
++    {
++        int fd = open(devicePaths[i], O_RDWR);
++        if (fd >= 0)
++        {
++            drmVersionPtr pVersion = drmGetVersion(fd);
++            if (   pVersion
++                && pVersion->name_len
++                && !strcmp(pVersion->name, VBOX_DRM_DRIVER_NAME)
++                && drmSetMaster(fd) == 0)
++            {
++                TRACE_LOG("Opened drm device %s\n", devicePaths[i]);
++                DRI2Info.deviceName = devicePaths[i];
++                /* Keep the driver open and hope that the path won't change. */
++                pVBox->drmFD = fd;
++                drmFreeVersion(pVersion);
++                break;
++            }
++            close(fd);
++            drmFreeVersion(pVersion);
++        }
++    }
++    if (!DRI2Info.deviceName)
++        return FALSE;
+     DRI2Info.version = 3;
+-    DRI2Info.fd = -1;
++    DRI2Info.fd = pVBox->drmFD;
+     DRI2Info.driverName = VBOX_DRI_DRIVER_NAME;
+-    DRI2Info.deviceName = "/dev/dri/card0";  /** @todo: do this right. */
+     DRI2Info.CopyRegion = VBOXDRICopyRegion;
+     DRI2Info.Wait = NULL;
+     DRI2Info.CreateBuffer = VBOXDRICreateBuffer;
+@@ -55,8 +96,9 @@ Bool VBOXDRIScreenInit(ScrnInfoPtr pScrn
+     return DRI2ScreenInit(pScreen, &DRI2Info);
+ }
+ 
+-void
+-VBOXDRICloseScreen(ScreenPtr pScreen, VBOXPtr pVBox)
++void VBOXDRICloseScreen(ScreenPtr pScreen, VBOXPtr pVBox)
+ {
+     DRI2CloseScreen(pScreen);
++    if (pVBox->drmFD >= 0)
++        close(pVBox->drmFD);
+ }
+--- a/src/VBox/Additions/x11/vboxvideo/vboxvideo.h
++++ b/src/VBox/Additions/x11/vboxvideo/vboxvideo.h
+@@ -57,6 +57,8 @@
+ 
+ #ifdef DEBUG
+ 
++#include <xf86.h>
++
+ #define TRACE_ENTRY() \
+ do { \
+     xf86Msg(X_INFO, __PRETTY_FUNCTION__); \
+@@ -195,8 +197,8 @@ typedef struct VBOXRec
+     int cVisualConfigs;
+     __GLXvisualConfig *pVisualConfigs;
+     DRIInfoRec *pDRIInfo;
+-    int drmFD;
+ # endif
++    int drmFD;
+ #endif
+ } VBOXRec, *VBOXPtr;
+ 
+diff --git a/include/VBox/VBoxGuest.h b/include/VBox/VBoxGuest.h
+index 62dfe1f..9c025eb 100644
+--- a/include/VBox/VBoxGuest.h
++++ b/include/VBox/VBoxGuest.h
+@@ -508,6 +508,28 @@ typedef VBOXGUESTOS2IDCCONNECT *PVBOXGUESTOS2IDCCONNECT;
+ 
+ #endif /* RT_OS_OS2 */
+ 
++#if defined(RT_OS_LINUX) || defined(RT_OS_SOLARIS) || defined(RT_OS_FREEBSD)
++
++/* Private IOCtls between user space and the kernel video driver.  DRM private
++ * IOCtls always have the type 'd' and a number between 0x40 and 0x99 (0x9F?) */
++
++# define VBOX_DRM_IOCTL(a) (0x40 + DRM_VBOX_ ## a)
++
++/** Stop using HGSMI in the kernel driver until it is re-enabled, so that a
++ *  user-space driver can use it.  It must be re-enabled before the kernel
++ *  driver can be used again in a sensible way. */
++/** @note These are only implemented on Linux currently and should fail
++ *        silently on other platforms. */
++# define DRM_VBOX_DISABLE_HGSMI    0
++# define DRM_IOCTL_VBOX_DISABLE_HGSMI    VBOX_DRM_IOCTL(DISABLE_HGSMI)
++# define VBOXVIDEO_IOCTL_DISABLE_HGSMI   _IO('d', DRM_IOCTL_VBOX_DISABLE_HGSMI)
++/** Enable HGSMI in the kernel driver after it was previously disabled. */
++# define DRM_VBOX_ENABLE_HGSMI     1
++# define DRM_IOCTL_VBOX_ENABLE_HGSMI     VBOX_DRM_IOCTL(ENABLE_HGSMI)
++# define VBOXVIDEO_IOCTL_ENABLE_HGSMI    _IO('d', DRM_IOCTL_VBOX_ENABLE_HGSMI)
++
++#endif /* RT_OS_LINUX || RT_OS_SOLARIS || RT_OS_FREEBSD */
++
+ /** @} */
+ #endif /* !defined(IN_RC) && !defined(IN_RING0_AGNOSTIC) && !defined(IPRT_NO_CRT) */
+ 

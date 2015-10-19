@@ -1,0 +1,46 @@
+Description: Disable the broken X11 support for VBoxSDL.
+ TODO: Put a short summary on the line above and replace this paragraph
+ with a longer explanation of this change. Complete the meta-information
+ with other relevant fields (see below for details). To make it easier, the
+ information below has been extracted from the changelog. Adjust it or drop
+ it.
+ .
+ virtualbox (4.3.14-dfsg-1) unstable; urgency=medium
+ .
+   [ Gianfranco Costamagna ]
+   * New upstream release (Closes: #754220)
+     thanks Mateusz Łukasik for the patch.
+   * Rebuild against the new xorg-video-abi-18 (Closes: #755067)
+   * Tweak README.source to show how to upgrade the package with
+     uscan (Closes: #699141), thanks Dmitry!
+   * Removing some binary files from the source tarball,
+     spotted by lintian.
+Author: Gianfranco Costamagna <costamagnagianfranco@yahoo.it>
+Bug-Debian: http://bugs.debian.org/699141
+Bug-Debian: http://bugs.debian.org/754220
+Bug-Debian: http://bugs.debian.org/755067
+
+---
+The information above should follow the Patch Tagging Guidelines, please
+checkout http://dep.debian.net/deps/dep3/ to learn about the format. Here
+are templates for supplementary fields that you might want to add:
+
+Origin: <vendor|upstream|other>, <url of original patch>
+Bug: <url in upstream bugtracker>
+Bug-Debian: http://bugs.debian.org/<bugnumber>
+Bug-Ubuntu: https://launchpad.net/bugs/<bugnumber>
+Forwarded: <no|not-needed|url proving that it has been forwarded>
+Reviewed-By: <name and email of someone who approved the patch>
+Last-Update: <YYYY-MM-DD>
+
+--- virtualbox-4.3.14-dfsg.orig/src/VBox/Frontends/VBoxSDL/Makefile.kmk
++++ virtualbox-4.3.14-dfsg/src/VBox/Frontends/VBoxSDL/Makefile.kmk
+@@ -61,7 +61,7 @@ else
+  endif
+ endif
+ VBoxSDL_DEFS.freebsd = VBOXSDL_WITH_X11
+-VBoxSDL_DEFS.linux = _GNU_SOURCE VBOXSDL_WITH_X11
++VBoxSDL_DEFS.linux = _GNU_SOURCE
+ VBoxSDL_DEFS.solaris = VBOXSDL_WITH_X11
+ ifdef VBOX_OPENGL
+  #VBoxSDL_DEFS.linux += VBOX_OPENGL

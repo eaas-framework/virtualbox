@@ -1,0 +1,110 @@
+# $Id: Makefile.kmk $
+## @file
+#
+
+#
+# Copyright (C) 2006-2012 Oracle Corporation
+#
+# This file is part of VirtualBox Open Source Edition (OSE), as
+# available from http://www.virtualbox.org. This file is free software;
+# you can redistribute it and/or modify it under the terms of the GNU
+# General Public License (GPL) as published by the Free Software
+# Foundation, in version 2 as it comes in the "COPYING" file of the
+# VirtualBox OSE distribution. VirtualBox OSE is distributed in the
+# hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
+#
+
+SUB_DEPTH = ../../../..
+include $(KBUILD_PATH)/subheader.kmk
+
+ifdef VBOX_WITH_LWIP_NAT
+# XXX: do not depend on order
+ifndef LWIP_SOURCES
+  include ../../Devices/Network/lwip-new/Makefile.kmk
+endif
+
+ifdef VBOX_WITH_HARDENING
+ PROGRAMS += VBoxNetLwipNATHardened
+ DLLS += VBoxNetLwipNAT
+else
+ PROGRAMS += VBoxNetLwipNAT
+endif
+
+ifdef VBOX_WITH_HARDENING
+ VBoxNetLwipNATHardened_SOURCES += VBoxNetNATHardened.cpp
+ VBoxNetLwipNATHardened_DEFS += SERVICE_NAME=\"VBoxNetNAT\"
+ VBoxNetLwipNATHardened_TEMPLATE=VBOXR3HARDENEDEXE
+ VBoxNetLwipNATHardened_NAME = VBoxNetNAT
+endif
+
+VBoxNetLwipNAT_TEMPLATE =
+VBoxNetLwipNAT_TEMPLATE := VBOXMAIN$(if-expr defined(VBOX_WITH_HARDENING),DLL,CLIENTEXE)
+VBoxNetLwipNAT_NAME = VBoxNetNAT
+VBoxNetLwipNAT_DEFS += ${LWIP_DEFS} IPv6
+# VBoxNetLwipNAT_DEFS.linux += WITH_VALGRIND # instrument lwip memp.c
+VBoxNetLwipNAT_DEFS.win += VBOX_COM_OUTOFPROC_MODULE _WIN32_WINNT=0x501 # Windows XP
+VBoxNetLwipNAT_SOURCES += VBoxNetLwipNAT.cpp	\
+	../NetLib/VBoxNetBaseService.cpp \
+	../NetLib/VBoxNetPortForwardString.cpp \
+	../NetLib/VBoxNetIntIf.cpp \
+	../NetLib/VBoxNetUDP.cpp \
+	../NetLib/VBoxNetARP.cpp \
+	../NetLib/ComHostUtils.cpp
+
+VBoxNetLwipNAT_LIBS = \
+	$(LIB_RUNTIME)
+VBoxNetLwipNAT_LIBS.solaris += socket nsl
+VBoxNetLwipNAT_LDFLAGS.win = /SUBSYSTEM:windows
+
+# Convince Solaris headers to expose socket stuff we need.  600 would
+# also work, but <sys/feature_tests.h> insists on C99 for it and so
+# explodes for C++.  Note that for 500 it insists on NOT using C99, so
+# when some day we decide to use -std=c99 we are in for some fun.
+VBoxNetLwipNAT_DEFS.solaris += _XOPEN_SOURCE=500 __EXTENSIONS__=1
+
+VBoxNetLwipNAT_SOURCES += \
+    proxy_pollmgr.c \
+    proxy_rtadvd.c \
+    proxy.c \
+    pxremap.c \
+    pxtcp.c \
+    pxudp.c \
+    pxdns.c \
+    fwtcp.c \
+    fwudp.c \
+    portfwd.c \
+    proxy_dhcp6ds.c \
+    proxy_tftpd.c
+
+ifeq ($(KBUILD_TARGET),win)
+ # unprivileged Icmp API
+ VBoxNetLwipNAT_SOURCES += pxping_win.c
+else
+ # raw sockets
+ VBoxNetLwipNAT_SOURCES += pxping.c
+endif
+
+# ifeq ($(VBOX_WITH_HARDENING),)
+#  ifn1of ($(KBUILD_TARGET), darwin win)
+#   # helper for debugging unprivileged
+#   VBoxNetLwipNAT_DEFS += VBOX_RAWSOCK_DEBUG_HELPER
+#   VBoxNetLwipNAT_SOURCES += getrawsock.c
+#  endif
+# endif
+
+VBoxNetLwipNAT_SOURCES.darwin  += rtmon_bsd.c
+VBoxNetLwipNAT_SOURCES.freebsd += rtmon_bsd.c
+VBoxNetLwipNAT_SOURCES.linux   += rtmon_linux.c
+VBoxNetLwipNAT_SOURCES.solaris += rtmon_bsd.c
+VBoxNetLwipNAT_SOURCES.win     += rtmon_win.c
+
+VBoxNetLwipNAT_SOURCES.win += \
+    RTWinPoll.cpp \
+    RTWinSocketPair.cpp
+
+VBoxNetLwipNAT_INCS += . # for lwipopts.h
+$(eval $(call def_vbox_lwip_public, \
+    VBoxNetLwipNAT, ../../Devices/Network/lwip-new))
+endif
+
+include $(FILE_KBUILD_SUB_FOOTER)
